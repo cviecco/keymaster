@@ -1516,6 +1516,20 @@ func (state *RuntimeState) defaultPathHandler(w http.ResponseWriter, r *http.Req
 	http.Error(w, "error not found", http.StatusNotFound)
 }
 
+func (state *RuntimeState) updateSelfCertInDBLoop() {
+	hostFP, err := getHostIdentity()
+	if err != nil {
+		logger.Fatalf("cannot compute Host identity")
+	}
+	for {
+		err := state.InsertSelfCertIntoDB(hostFP)
+		if err != nil {
+			logger.Printf("cannot inster cert into DB")
+		}
+		time.Sleep(6 * time.Hour)
+	}
+}
+
 type httpLogger struct {
 	AccessLogger log.DebugLogger
 }
@@ -1687,6 +1701,7 @@ func main() {
 	if isReady != true {
 		panic("got bad signer ready data")
 	}
+	go runtimeState.updateSelfCertInDBLoop()
 
 	if len(runtimeState.Config.Ldap.LDAPTargetURLs) > 0 && !runtimeState.Config.Ldap.DisablePasswordCache {
 		err = runtimeState.passwordChecker.UpdateStorage(runtimeState)

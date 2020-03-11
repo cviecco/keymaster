@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/gob"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -79,6 +80,7 @@ func initDBPostgres(state *RuntimeState) (err error) {
 			logger.Printf("init postgres err: %s: %q\n", err, sqlStmt)
 			return err
 		}
+		//TODO add x509ca_certs table
 	}
 
 	return nil
@@ -95,6 +97,7 @@ func initDBSQlite(state *RuntimeState) (err error) {
 var sqliteinitializationStatements = []string{
 	`create table if not exists user_profile (id integer not null primary key, username text unique, profile_data blob);`,
 	`create table if not exists expiring_signed_user_data(id integer not null primary key, username text not null, jws_data text not null, type integer not null, expiration_epoch integer not null, update_epoch integer no null, UNIQUE(username,type));`,
+	`create table if not exists x509ca_certs (id integer not null primary key,key_fp text not null, host_fp not null, update_epoch int not null, ca_pem text not null, UNIQUE(key_fp,host_fp))`,
 }
 
 func initializeSQLitetables(db *sql.DB) error {
@@ -198,6 +201,14 @@ func copyDBIntoSQLite(source, destination *sql.DB, destinationType string) error
 	}
 	defer genericRows.Close()
 
+	queryStr2 := fmt.Sprintf("SELECT key_fp,host_fp,update_epoch,ca_pem FROM x509ca_certs WHERE update_epoch>%d", time.Now().Unix()-(3600*24*7))
+	x509CaRows, err := source.Query(queryStr2)
+	if err != nil {
+		logger.Printf("err='%s'", err)
+		return err
+	}
+	defer x509CaRows.Close()
+
 	tx, err := destination.Begin()
 	if err != nil {
 		logger.Printf("err='%s'", err)
@@ -251,6 +262,31 @@ func copyDBIntoSQLite(source, destination *sql.DB, destinationType string) error
 		}
 		//username, type, jws_data, expiration_epoch, update_epoch
 		_, err = expiringUpsertStmt.Exec(username, dataType, jwsData, expirationEpoch, updateEpoch)
+		if err != nil {
+			logger.Printf("err='%s'", err)
+			return err
+		}
+	}
+
+	saveCAUpstertText := saveCADataStmt[destinationType]
+	saveCAUpstertStmt, err := tx.Prepare(saveCAUpstertText)
+	if err != nil {
+		logger.Printf("err='%s'", err)
+		return err
+	}
+	defer saveCAUpstertStmt.Close()
+	for x509CaRows.Next() {
+		var (
+			keyFP       string
+			hostFP      string
+			updateEpoch int64
+			caPem       string
+		)
+		if err := x509CaRows.Scan(&keyFP, &hostFP, &updateEpoch, &caPem); err != nil {
+			logger.Printf("err='%s'", err)
+			return err
+		}
+		_, err = saveCAUpstertStmt.Exec(keyFP, hostFP, updateEpoch, caPem)
 		if err != nil {
 			logger.Printf("err='%s'", err)
 			return err
@@ -633,4 +669,53 @@ func (state *RuntimeState) UpsertSigned(username string, dataType int, expiratio
 	metricLogExternalServiceDuration("storage-save", time.Since(start))
 
 	return nil
+}
+
+var saveCADataStmt = map[string]string{
+	"sqlite":   "insert or replace into x509ca_certs(key_fp, host_fp,update_epoch,ca_pem) values (?,?,?,?)",
+	"postgres": "insert into x509ca_certs(key_fp, host_fp,update_time,ca_pem) values ($1,$2,$3,$4) ON CONFLICT(key_fp,host_fp) DO UPDATE SET  ca_pem = excluded.ca_pem, update_epoch = excluded.update_epoch",
+}
+
+func (state *RuntimeState) InsertSelfCertIntoDB(hostFP string) error {
+	signerFP, err := getKeyFingerprint(state.Signer.Public())
+	if err != nil {
+		return err
+	}
+	pemCert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: state.caCertDer}))
+
+	tx, err := state.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmtText := saveCADataStmt[state.dbType]
+	stmt, err := tx.Prepare(stmtText)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(signerFP, hostFP, time.Now().Unix(), pemCert)
+	if err != nil {
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// TODO also include update time
+var getCACertDataStmt = map[string]string{
+	"sqlite":   "select key_fp,ca_pem  from x509ca_certs where key_fp != ? or host_fp != ?",
+	"postgres": "select key_fp,ca_pem  from x509ca_certs where key_fp != $1 or host_fp != $2",
+}
+
+type DBkeymasterCAData struct {
+	KeyFP string
+	CAPem string
+}
+
+func (state *RuntimeState) getOtherKeymasterCAPem(keyFP, HostFP string) ([]DBkeymasterCAData, error) {
+	return nil, nil
 }
