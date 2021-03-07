@@ -7,7 +7,7 @@ jobs:
         #todo add go 1.16.x
         go-version: [1.15.x]
         #todo fix testing to that is succeeds on windows
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
     - name: Install Go
@@ -16,5 +16,7 @@ jobs:
         go-version: ${{ matrix.go-version }}
     - name: Checkout code
       uses: actions/checkout@v2
+    - name: Get Dependencies
+      run: make get-deps
     - name: Test
       run: make test
