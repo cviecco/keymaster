@@ -31,10 +31,10 @@ jobs:
         GOPATH: /home/runner/work/keymaster/go
 
     - name: Get Dependencies
-      run: |
-        export PATH=$PATH:$(go env GOPATH)/bin
-        make get-deps
+      run: make get-deps
+      env:
+        GOPATH: /home/runner/work/keymaster/go
     - name: Test
-      run: |
-        export PATH=$PATH:$(go env GOPATH)/bin
-        make test
+      run:  make test
+      env:
+        GOPATH: /home/runner/work/keymaster/go
