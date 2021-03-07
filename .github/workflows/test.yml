@@ -17,6 +17,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
     - name: Get Dependencies
-      run: make get-deps
+      run: |
+        export PATH=$PATH:$(go env GOPATH)/bin
+        make get-deps
     - name: Test
-      run: make test
+      run: |
+        export PATH=$PATH:$(go env GOPATH)/bin
+        make test
