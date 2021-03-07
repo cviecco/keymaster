@@ -16,6 +16,9 @@ jobs:
         go-version: ${{ matrix.go-version }}
     - name: Checkout code
       uses: actions/checkout@v2
+      with:
+        fetch-depth: 1
+        path: go/src/github.com/Cloud-Foundations/keymaster
 
     - name: Debug
       run: |
@@ -24,6 +27,8 @@ jobs:
         echo ${GITHUB_WORKSPACE}
         echo ${GOPATH}
         echo ${GOROOT}
+      env:
+        GOPATH: /home/runner/work/keymaster/go
 
     - name: Get Dependencies
       run: |
