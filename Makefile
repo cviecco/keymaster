@@ -17,14 +17,14 @@ VERSION=1.8.2
 #LDFLAGS=-ldflags "-X github.com/ariejan/roll/core.Version=${VERSION} -X github.com/ariejan/roll/core.BuildTime=${BUILD_TIME}"
 
 all:	init-config-host
-	cd $(GOPATH)/src; go install -ldflags "-X main.Version=${VERSION}" github.com/Cloud-Foundations/keymaster/cmd/*
+	cd $(GOPATH)/src; env GO111MODULE=auto  go install -ldflags "-X main.Version=${VERSION}" github.com/Cloud-Foundations/keymaster/cmd/*
 
 win-client:
 	cd $(GOPATH)\src && go install -ldflags "-X main.Version=${VERSION}" github.com\Cloud-Foundations\keymaster\cmd\keymaster
 	cd $(GOPATH)\src\github.com\Cloud-Foundations\keymaster\cmd\keymaster && go test -v ./...
 
 get-deps:	init-config-host
-	go get -t ./...
+	env GO111MODULE=auto go get -t ./...
 
 clean:
 	rm -f bin/*
