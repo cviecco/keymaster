@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/Cloud-Foundations/golib/pkg/log"
+	"github.com/flynn/hid"
 	"github.com/flynn/u2f/u2fhid"
 	"github.com/flynn/u2f/u2ftoken"
 	"github.com/tstranex/u2f"
 )
 
 const clientDataAuthenticationTypeValue = "navigator.id.getAssertion"
+
+var ErrKeyUnknownToDevice = errors.New("Key Unknown to u2f Device")
 
 func checkU2FDevices(logger log.Logger) {
 	// TODO: move this to initialization code, ans pass the device list to this function?
@@ -42,6 +45,128 @@ func checkU2FDevices(logger log.Logger) {
 		defer dev.Close()
 	}
 
+}
+
+func authenticateSingleDevice(
+	d *hid.DeviceInfo,
+	webSignRequest u2f.WebSignRequest,
+	//client *http.Client,
+	//baseURL string,
+	//userAgentString string,
+	logger log.DebugLogger) ([]byte, []byte, []byte, error) {
+
+	//d := devices[0]
+	logger.Printf("manufacturer = %q, product = %q, vid = 0x%04x, pid = 0x%04x",
+		d.Manufacturer, d.Product, d.ProductID, d.VendorID)
+	dev, err := u2fhid.Open(d)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer dev.Close()
+	logger.Printf("product=%q u2fHID dev=%+v", d.Product, dev)
+
+	msg := []byte("echo")
+	res, err := dev.Ping(msg)
+	if err != nil {
+		logger.Printf("ping error: %s\n", err)
+		//return
+	}
+
+	if !bytes.Equal(res, msg) {
+		logger.Printf("expected %x, got %x\n", msg, res)
+		//return
+	}
+	logger.Printf("echo was successful")
+	/*
+		err = dev.Wink()
+		if err != nil {
+			logger.Printf("wink error: %s\n", err)
+			//return
+		}
+		time.Sleep(10 * time.Second)
+	*/
+	t := u2ftoken.NewToken(dev)
+	/*
+		version, err := t.Version()
+		if err != nil {
+			logger.Fatal(err)
+		}
+	*/
+	// TODO: Maybe use Debugf()?
+	// logger.Println("version:", version)
+	tokenAuthenticationClientData := u2f.ClientData{
+		Typ:       clientDataAuthenticationTypeValue,
+		Challenge: webSignRequest.Challenge,
+		Origin:    webSignRequest.AppID,
+	}
+	tokenAuthenticationBuf := new(bytes.Buffer)
+	err = json.NewEncoder(tokenAuthenticationBuf).Encode(
+		tokenAuthenticationClientData)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	logger.Printf("authenticationBuf=%q", tokenAuthenticationBuf.Bytes())
+
+	reqSignChallenge := sha256.Sum256(tokenAuthenticationBuf.Bytes())
+	// TODO: update creation to silence linter
+	challenge := make([]byte, 32)
+	app := make([]byte, 32)
+	challenge = reqSignChallenge[:]
+	reqSingApp := sha256.Sum256([]byte(webSignRequest.AppID))
+	app = reqSingApp[:]
+	// We find out what key is associated to the currently inserted device.
+	keyIsKnown := false
+	var req u2ftoken.AuthenticateRequest
+	var keyHandle []byte
+	for _, registeredKey := range webSignRequest.RegisteredKeys {
+		decodedHandle, err := base64.RawURLEncoding.DecodeString(
+			registeredKey.KeyHandle)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		keyHandle = decodedHandle
+		req = u2ftoken.AuthenticateRequest{
+			Challenge:   challenge,
+			Application: app,
+			KeyHandle:   keyHandle,
+		}
+		logger.Debugf(0, "%+v", req)
+		if err := t.CheckAuthenticate(req); err != nil {
+			logger.Debugln(1, err)
+		} else {
+			keyIsKnown = true
+			break
+		}
+	}
+	if !keyIsKnown {
+		return nil, nil, nil, ErrKeyUnknownToDevice
+	}
+
+	// Now we ask the token to sign/authenticate
+	logger.Println("authenticating, provide user presence")
+	var rawBytes []byte
+	for {
+		res, err := t.Authenticate(req)
+		if err == u2ftoken.ErrPresenceRequired {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		} else if err != nil {
+			logger.Fatal(err)
+		}
+		rawBytes = res.RawResponse
+		logger.Printf("counter = %d, signature = %x",
+			res.Counter, res.Signature)
+		break
+	}
+
+	return keyHandle, tokenAuthenticationBuf.Bytes(), rawBytes, nil
+}
+
+type deviceSignatureResponse struct {
+	keyHandle     []byte
+	clientData    []byte
+	signatureData []byte
+	err           error
 }
 
 func doU2FAuthenticate(
@@ -91,82 +216,42 @@ func doU2FAuthenticate(
 		return err
 	}
 	// TODO: transform this into an iteration over all found devices
-	d := devices[0]
-	logger.Printf("manufacturer = %q, product = %q, vid = 0x%04x, pid = 0x%04x",
-		d.Manufacturer, d.Product, d.ProductID, d.VendorID)
-	dev, err := u2fhid.Open(d)
-	if err != nil {
-		logger.Fatal(err)
+	c := make(chan deviceSignatureResponse)
+	for _, d := range devices {
+		go func(d *hid.DeviceInfo) {
+			var resp deviceSignatureResponse
+			resp.keyHandle, resp.clientData, resp.signatureData, resp.err = authenticateSingleDevice(d, webSignRequest, logger)
+			c <- resp
+		}(d)
 	}
-	defer dev.Close()
-	t := u2ftoken.NewToken(dev)
-	version, err := t.Version()
-	if err != nil {
-		logger.Fatal(err)
-	}
-	// TODO: Maybe use Debugf()?
-	logger.Println("version:", version)
-	tokenAuthenticationClientData := u2f.ClientData{
-		Typ:       clientDataAuthenticationTypeValue,
-		Challenge: webSignRequest.Challenge,
-		Origin:    webSignRequest.AppID,
-	}
-	tokenAuthenticationBuf := new(bytes.Buffer)
-	err = json.NewEncoder(tokenAuthenticationBuf).Encode(
-		tokenAuthenticationClientData)
-	if err != nil {
-		logger.Fatal(err)
-	}
-	reqSignChallenge := sha256.Sum256(tokenAuthenticationBuf.Bytes())
-	// TODO: update creation to silence linter
-	challenge := make([]byte, 32)
-	app := make([]byte, 32)
-	challenge = reqSignChallenge[:]
-	reqSingApp := sha256.Sum256([]byte(webSignRequest.AppID))
-	app = reqSingApp[:]
-	// We find out what key is associated to the currently inserted device.
-	keyIsKnown := false
-	var req u2ftoken.AuthenticateRequest
+
+	var lastErr error
 	var keyHandle []byte
-	for _, registeredKey := range webSignRequest.RegisteredKeys {
-		decodedHandle, err := base64.RawURLEncoding.DecodeString(
-			registeredKey.KeyHandle)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		keyHandle = decodedHandle
-		req = u2ftoken.AuthenticateRequest{
-			Challenge:   challenge,
-			Application: app,
-			KeyHandle:   keyHandle,
-		}
-		logger.Debugf(0, "%+v", req)
-		if err := t.CheckAuthenticate(req); err != nil {
-			logger.Debugln(1, err)
-		} else {
-			keyIsKnown = true
-			break
-		}
-	}
-	if !keyIsKnown {
-		err = errors.New("key is not known")
-		return err
-	}
-	// Now we ask the token to sign/authenticate
-	logger.Println("authenticating, provide user presence")
+	var clientData []byte
 	var rawBytes []byte
-	for {
-		res, err := t.Authenticate(req)
-		if err == u2ftoken.ErrPresenceRequired {
-			time.Sleep(200 * time.Millisecond)
+	for i := 0; i < len(devices); i++ {
+		result := <-c
+		lastErr = result.err
+		if result.err != nil {
 			continue
-		} else if err != nil {
-			logger.Fatal(err)
 		}
-		rawBytes = res.RawResponse
-		logger.Printf("counter = %d, signature = %x",
-			res.Counter, res.Signature)
-		break
+		keyHandle = result.keyHandle
+		clientData = result.clientData
+		rawBytes = result.signatureData
+
+	}
+
+	/*
+		d := devices[0]
+		logger.Printf("manufacturer = %q, product = %q, vid = 0x%04x, pid = 0x%04x",
+			d.Manufacturer, d.Product, d.ProductID, d.VendorID)
+		keyHandle, clientData, rawBytes, err := authenticateSingleDevice(d, webSignRequest, logger)
+	*/
+	if lastErr != nil {
+		if err == ErrKeyUnknownToDevice {
+			return lastErr
+		}
+		logger.Fatal(lastErr)
 	}
 	// now we do the last request
 	var signRequestResponse u2f.SignResponse
@@ -175,7 +260,9 @@ func doU2FAuthenticate(
 	signRequestResponse.SignatureData = base64.RawURLEncoding.EncodeToString(
 		rawBytes)
 	signRequestResponse.ClientData = base64.RawURLEncoding.EncodeToString(
-		tokenAuthenticationBuf.Bytes())
+		//	tokenAuthenticationBuf.Bytes())
+		clientData)
+
 	//
 	webSignRequestBuf := &bytes.Buffer{}
 	err = json.NewEncoder(webSignRequestBuf).Encode(signRequestResponse)
