@@ -52,8 +52,14 @@ func (state *RuntimeState) genNewSerializedAuthJWT(username string, authLevel in
 	if err != nil {
 		return "", err
 	}
+	jwtId, err := genRandomString()
+	if err != nil {
+		return "", err
+	}
+
 	issuer := state.idpGetIssuer()
 	authToken := authInfoJWT{Issuer: issuer, Subject: username,
+		JWTId:    jwtId,
 		Audience: []string{issuer}, AuthType: authLevel, TokenType: "keymaster_auth"}
 	authToken.NotBefore = time.Now().Unix()
 	authToken.IssuedAt = authToken.NotBefore

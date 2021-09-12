@@ -84,6 +84,7 @@ type authInfoJWT struct {
 	Expiration int64    `json:"exp,omitempty"`
 	NotBefore  int64    `json:"nbf,omitempty"`
 	IssuedAt   int64    `json:"iat,omitempty"`
+	JWTId      string   `json:"jti,omitEmpty"`
 	TokenType  string   `json:"token_type"`
 	AuthType   int      `json:"auth_type"`
 }
