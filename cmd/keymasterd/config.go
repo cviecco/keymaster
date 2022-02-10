@@ -37,7 +37,7 @@ import (
 	"github.com/Cloud-Foundations/keymaster/lib/pwauth/htpassword"
 	"github.com/Cloud-Foundations/keymaster/lib/pwauth/ldap"
 	"github.com/Cloud-Foundations/keymaster/lib/vip"
-	"github.com/duo-labs/webauthn/webauthn"
+	"github.com/cviecco/webauthn/webauthn"
 	"github.com/howeyc/gopass"
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"

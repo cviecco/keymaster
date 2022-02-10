@@ -1,16 +1,49 @@
 package main
 
 import (
+	"bytes"
+	//"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	//"github.com/duo-labs/webauthn/webauthn"
+	"github.com/cviecco/webauthn/protocol"
+	"github.com/cviecco/webauthn/webauthn"
+	"github.com/tstranex/u2f"
 
 	"github.com/Cloud-Foundations/keymaster/lib/instrumentedwriter"
 )
+
+/*
+{
+  "id": "-GKzwA8VPVbm8jqZtd-Y4zHclWrA_WBJfdq5vGbsQOqpZ2g0y4B12S3lGq7WMJ-GYOweMbRFxwMT6EyODTHaqQ",
+  "rawId": "-GKzwA8VPVbm8jqZtd-Y4zHclWrA_WBJfdq5vGbsQOqpZ2g0y4B12S3lGq7WMJ-GYOweMbRFxwMT6EyODTHaqQ",
+  "type": "public-key",
+  "response": {
+    "authenticatorData": "p6ieKJi-OGPwUzaOXX3Lt4gSXEt1-h5q_AheyxprylYBAAAEug",
+    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJlMTk4R2JJV3BjelNadVk5c0VmY0xrVEhfRk1HdWF1dV8yQlptbmZDWkxRIiwiY2xpZW50RXh0ZW5zaW9ucyI6eyJhcHBpZCI6Imh0dHBzOi8vbG9jYWxob3N0OjQ0NDMifSwiaGFzaEFsZ29yaXRobSI6IlNIQS0yNTYiLCJvcmlnaW4iOiJodHRwczovL2xvY2FsaG9zdDo0NDQzIiwidHlwZSI6IndlYmF1dGhuLmdldCJ9",
+    "signature": "MEUCIQDeuMxz1bHwxumvVideI0ilM9ZMCRFI5PP0SAyf4cJ8TAIgCqNUT4-NQEq-KopCT2KoqbmPd2dFHXbY2oPgZdSRNV0",
+    "userHandle": ""
+  }
+}
+*/
+
+type webAuthnInternalResponse struct {
+	AuthenticatorData string
+	ClientDataJSON    string
+	Signature         string
+	UserHandle        string
+}
+
+type webAuthnRequestResponse struct {
+	Id       string `json:"id,omitempty"`
+	RawId    string `json:"rawId,omitempty"`
+	Type     string
+	Response webAuthnInternalResponse
+}
 
 // from: https://github.com/duo-labs/webauthn.io/blob/3f03b482d21476f6b9fb82b2bf1458ff61a61d41/server/response.go#L15
 func webauthnJsonResponse(w http.ResponseWriter, d interface{}, c int) {
@@ -220,6 +253,10 @@ func (state *RuntimeState) webauthnAuthLogin(w http.ResponseWriter, r *http.Requ
 		webauthnJsonResponse(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	logger.Debugf(2, "begin-auth sessionData:%+v", sessionData)
+	logger.Debugf(2, "begin-auth options:%+v", options)
+
 	var localAuth localUserData
 	localAuth.WebAuthnChallenge = sessionData
 	localAuth.ExpiresAt = time.Now().Add(maxAgeU2FVerifySeconds * time.Second)
@@ -289,16 +326,6 @@ func (state *RuntimeState) webauthnAuthFinish(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	/*
-	   // load the session data
-	        sessionData, err := sessionStore.GetWebauthnSession("authentication", r)
-	        if err != nil {
-	                log.Println(err)
-	                jsonResponse(w, err.Error(), http.StatusBadRequest)
-	                return
-	        }
-	*/
-
 	state.Mutex.Lock()
 	localAuth, ok := state.localAuthData[authData.Username]
 	state.Mutex.Unlock()
@@ -306,20 +333,6 @@ func (state *RuntimeState) webauthnAuthFinish(w http.ResponseWriter, r *http.Req
 		http.Error(w, "challenge missing", http.StatusBadRequest)
 		return
 	}
-
-	/*
-	       // in an actual implementation we should perform additional
-	       // checks on the returned 'credential'
-	   	_, err = webAuthn.FinishLogin(user, sessionData, r)
-	   	if err != nil {
-	   		log.Println(err)
-	   		jsonResponse(w, err.Error(), http.StatusBadRequest)
-	   		return
-	   	}
-
-	   	// handle successful login
-	   	jsonResponse(w, "Login Success", http.StatusOK)
-	*/
 
 	// in an actual implementation we should perform additional
 	// checks on the returned 'credential'
@@ -352,6 +365,294 @@ func (state *RuntimeState) webauthnAuthFinish(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		logger.Printf("Auth Cookie NOT found ? %s", err)
 		state.writeFailureResponse(w, r, http.StatusInternalServerError, "Failure updating vip token")
+		return
+	}
+
+	webauthnJsonResponse(w, "Login Success", http.StatusOK)
+
+}
+
+const compatWebAuthnAuthBeginPath = "/compat-webauthn/AuthBegin/"
+
+func (state *RuntimeState) compatWebauthnAuthLogin(w http.ResponseWriter, r *http.Request) {
+	logger.Debugf(3, "top of compatWebauthnAuthBegin")
+	if state.sendFailureToClientIfLocked(w, r) {
+		return
+	}
+
+	// /u2f/RegisterRequest/<assumed user>
+	// pieces[0] == "" pieces[1] = "u2f" pieces[2] == "RegisterRequest"
+	pieces := strings.Split(r.URL.Path, "/")
+
+	var assumedUser string
+	if len(pieces) >= 4 {
+		assumedUser = pieces[3]
+	} else {
+		http.Error(w, "error", http.StatusBadRequest)
+		return
+	}
+	// TODO(camilo_viecco1): reorder checks so that simple checks are done before checking user creds
+	authData, err := state.checkAuth(w, r, state.getRequiredWebUIAuthLevel())
+	if err != nil {
+		logger.Debugf(1, "%v", err)
+		return
+	}
+	w.(*instrumentedwriter.LoggingWriter).SetUsername(authData.Username)
+
+	// Check that they can change other users
+	if !state.IsAdminUserAndU2F(authData.Username, authData.AuthType) &&
+		authData.Username != assumedUser {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profile, _, fromCache, err := state.LoadUserProfile(assumedUser)
+	if err != nil {
+		logger.Printf("loading profile error: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+
+	}
+	if fromCache {
+		logger.Printf("DB is being cached and requesting authentication, proceeding with cached values")
+		//http.Error(w, "db backend is offline for writes", http.StatusServiceUnavailable)
+		//return
+	}
+
+	//enhance options with the appid extension
+	u2fAppID = "https://" + state.HostIdentity
+	if state.Config.Base.HttpAddress != ":443" {
+		u2fAppID = u2fAppID + state.Config.Base.HttpAddress
+	}
+
+	// generate PublicKeyCredentialRequestOptions, session data
+	options, sessionData, err := state.webAuthn.BeginLogin(profile, webauthn.WithAssertionExtensions(map[string]interface{}{"appid": u2fAppID}))
+	if err != nil {
+		logger.Printf("webauthnAuthBegin: %s", err)
+		webauthnJsonResponse(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Debugf(1, "compat-begin-auth sessionData:%+v", sessionData)
+	logger.Debugf(1, "compat-begin-auth options:%+v", options)
+
+	//probably replace with somthing for u2f...
+
+	registrations := getRegistrationArray(profile.U2fAuthData)
+	if len(registrations) < 1 {
+		http.Error(w, "registration missing", http.StatusBadRequest)
+		return
+	}
+
+	c, err := u2f.NewChallenge(u2fAppID, u2fTrustedFacets)
+	if err != nil {
+		logger.Printf("u2f.NewChallenge error: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	logger.Debugf(2, "compat-begin-auth Challnge: %+v", c)
+
+	req := c.SignRequest(registrations)
+	logger.Debugf(2, "compat-begin-auth Sign request: %+v", req)
+
+	// now we copy from u2f
+	sessionData.Challenge = req.Challenge
+	options.Response.Challenge = c.Challenge
+
+	//enhance options with the appid extension
+	u2fAppID = "https://" + state.HostIdentity
+	if state.Config.Base.HttpAddress != ":443" {
+		u2fAppID = u2fAppID + state.Config.Base.HttpAddress
+	}
+
+	logger.Debugf(1, "compat-begin-auth sessionData:%+v", sessionData)
+	logger.Debugf(1, "compat-begin-auth options:%+v", options)
+
+	//save cached copy
+	var localAuth localUserData
+	localAuth.WebAuthnChallenge = sessionData
+	localAuth.U2fAuthChallenge = c
+	localAuth.ExpiresAt = time.Now().Add(maxAgeU2FVerifySeconds * time.Second)
+	state.Mutex.Lock()
+	state.localAuthData[authData.Username] = localAuth
+	state.Mutex.Unlock()
+	webauthnJsonResponse(w, options, http.StatusOK)
+
+	////
+
+}
+
+const compatWebAuthnAuthFinishPath = "/compat-webauthn/AuthFinish/"
+
+func (state *RuntimeState) compatWebauthnAuthFinish(w http.ResponseWriter, r *http.Request) {
+	logger.Debugf(3, "top of webauthnAuthBegin")
+	if state.sendFailureToClientIfLocked(w, r) {
+		return
+	}
+
+	// /u2f/RegisterRequest/<assumed user>
+	// pieces[0] == "" pieces[1] = "u2f" pieces[2] == "RegisterRequest"
+	pieces := strings.Split(r.URL.Path, "/")
+
+	var assumedUser string
+	if len(pieces) >= 4 {
+		assumedUser = pieces[3]
+	} else {
+		http.Error(w, "error", http.StatusBadRequest)
+		return
+	}
+	// TODO(camilo_viecco1): reorder checks so that simple checks are done before checking user creds
+	authData, err := state.checkAuth(w, r, state.getRequiredWebUIAuthLevel())
+	if err != nil {
+		logger.Debugf(1, "%v", err)
+		return
+	}
+	w.(*instrumentedwriter.LoggingWriter).SetUsername(authData.Username)
+
+	// Check that they can change other users
+	if !state.IsAdminUserAndU2F(authData.Username, authData.AuthType) &&
+		authData.Username != assumedUser {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profile, ok, _, err := state.LoadUserProfile(authData.Username)
+	if err != nil {
+		logger.Printf("loading profile error: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+
+	}
+	if !ok {
+		http.Error(w, "No regstered data", http.StatusBadRequest)
+		return
+	}
+
+	state.Mutex.Lock()
+	localAuth, ok := state.localAuthData[authData.Username]
+	state.Mutex.Unlock()
+	if !ok {
+		http.Error(w, "challenge missing", http.StatusBadRequest)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Printf("Error reding body: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	// TODO: ensure bodybytes is not too large
+	bodyReader := bytes.NewReader(bodyBytes)
+
+	// in an actual implementation we should perform additional
+	// checks on the returned 'credential'
+	webAuthNSuccess := false
+
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(bodyReader)
+	if err != nil {
+		logger.Println(err)
+		http.Error(w, "challenge missing", http.StatusBadRequest)
+		return
+	}
+
+	_, err = state.webAuthn.ValidateLogin(profile, *localAuth.WebAuthnChallenge, parsedResponse)
+	if err != nil {
+		logger.Println(err)
+		logger.Debugf(2, "compatWebauthnAuthFinish Failed webauthn validation")
+	} else {
+		logger.Debugf(2, "compatWebauthnAuthFinish Successful webauthn validation")
+		webAuthNSuccess = true
+	}
+
+	u2fSuccess := false
+	logger.Debugf(2, "incomingbody = %s", string(bodyBytes))
+
+	var car webAuthnRequestResponse
+	err = json.Unmarshal([]byte(bodyBytes), &car)
+	if err != nil {
+		logger.Printf("Error parsing body: %s", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	logger.Debugf(2, "decoded assertion response : %+v", car)
+
+	//var err error
+
+	var signResp u2f.SignResponse
+	/*
+		if err := json.NewDecoder(r.Body).Decode(&signResp); err != nil {
+			http.Error(w, "invalid response: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	*/
+	/*
+		signResp := u2f.SignResponse {
+			KeyHandle:
+			SignatureData
+			ClientData
+		}
+	*/
+	logger.Debugf(2, "parsedResponse=%+v", parsedResponse)
+	logger.Debugf(2, "parsedAssertionResponse=%+v", parsedResponse.Response)
+	signResp.KeyHandle = car.Id
+	signResp.SignatureData = car.Response.Signature
+	signResp.ClientData = car.Response.ClientDataJSON
+	//signResp.ClientData = base64.RawURLEncoding.EncodeToString(parsedResponse.Response.AuthenticatorData)
+	//signResp.KeyHandle = base64.RawURLEncoding.EncodeToString(parsedResponse.ID)
+	//signResp.SignatureData = parsedResponse.
+
+	for i, u2fReg := range profile.U2fAuthData {
+		if localAuth.U2fAuthChallenge == nil {
+			logger.Printf("nill challenge")
+			continue
+		}
+
+		logger.Debugf(2, "before auth check u2f")
+		//newCounter, authErr := u2fReg.Registration.Authenticate(signResp, *profile.U2fAuthChallenge, u2fReg.Counter)
+		newCounter, authErr := u2fReg.Registration.Authenticate(signResp, *localAuth.U2fAuthChallenge, u2fReg.Counter)
+		if authErr != nil {
+			logger.Debugf(2, "auth check u2f fail err: %s", authErr)
+			continue
+		}
+		//metricLogAuthOperation(getClientType(r), proto.AuthTypeU2F, true)
+
+		logger.Debugf(0, "newCounter: %d", newCounter)
+		//counter = newCounter
+		u2fReg.Counter = newCounter
+		//profile.U2fAuthData[i].Counter = newCounter
+		u2fReg.Counter = newCounter
+		profile.U2fAuthData[i] = u2fReg
+		//profile.U2fAuthChallenge = nil
+
+		// TODO: update local cookie state
+		//w.Write([]byte("success"))
+		u2fSuccess = true
+		logger.Debugf(2, "compat u2f verify successful")
+		break
+	}
+
+	if !webAuthNSuccess && !u2fSuccess {
+		logger.Debugf(2, "compat u2f/webauthn verify failure u2fSuccess=%+v", u2fSuccess)
+		webauthnJsonResponse(w, "Autnetication Falure", http.StatusBadRequest)
+		return
+	}
+	state.Mutex.Lock()
+	delete(state.localAuthData, authData.Username)
+	state.Mutex.Unlock()
+
+	/*
+	   eventNotifier.PublishAuthEvent(eventmon.AuthTypeU2F, authData.Username)
+	   _, isXHR := r.Header["X-Requested-With"]
+	   if isXHR {
+	           eventNotifier.PublishWebLoginEvent(authData.Username)
+	   }
+	*/
+	_, err = state.updateAuthCookieAuthlevel(w, r,
+		authData.AuthType|AuthTypeFIDO2)
+	if err != nil {
+		logger.Printf("Auth Cookie NOT found ? %s", err)
+		state.writeFailureResponse(w, r, http.StatusInternalServerError, "Failure updating auth token")
 		return
 	}
 

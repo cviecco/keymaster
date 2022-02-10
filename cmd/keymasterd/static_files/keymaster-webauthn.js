@@ -81,7 +81,7 @@ function webAuthnAuthenticateUser() {
     },
     'json')
     .then((credentialRequestOptions) => {
-
+      console.log(credentialRequestOptions);
       credentialRequestOptions.publicKey.challenge = bufferDecode(credentialRequestOptions.publicKey.challenge);
       credentialRequestOptions.publicKey.allowCredentials.forEach(function (listItem) {
         listItem.id = bufferDecode(listItem.id)
@@ -92,7 +92,7 @@ function webAuthnAuthenticateUser() {
       })
     })
     .then((assertion) => {
-
+      console.log(assertion);
       let authData = assertion.response.authenticatorData;
       let clientDataJSON = assertion.response.clientDataJSON;
       let rawId = assertion.rawId;
@@ -127,10 +127,66 @@ function webAuthnAuthenticateUser() {
     });
 }
 
+function webAuthnAuthenticateUserCompat() {
+  var username = document.getElementById('username').textContent;
+  $.get(
+    '/compat-webauthn/AuthBegin/' + username,
+    null,
+    function (data) {
+      return data
+    },
+    'json')
+    .then((credentialRequestOptions) => {
+      console.log(credentialRequestOptions);
+      credentialRequestOptions.publicKey.challenge = bufferDecode(credentialRequestOptions.publicKey.challenge);
+      credentialRequestOptions.publicKey.allowCredentials.forEach(function (listItem) {
+        listItem.id = bufferDecode(listItem.id)
+      });
 
+      return navigator.credentials.get({
+        publicKey: credentialRequestOptions.publicKey
+      })
+    })
+    .then((assertion) => {
+      console.log(assertion);
+      let authData = assertion.response.authenticatorData;
+      let clientDataJSON = assertion.response.clientDataJSON;
+      let rawId = assertion.rawId;
+      let sig = assertion.response.signature;
+      let userHandle = assertion.response.userHandle;
+
+      $.post(
+        '/compat-webauthn/AuthFinish/' + username,
+        JSON.stringify({
+          id: assertion.id,
+          rawId: bufferEncode(rawId),
+          type: assertion.type,
+          response: {
+            authenticatorData: bufferEncode(authData),
+            clientDataJSON: bufferEncode(clientDataJSON),
+            signature: bufferEncode(sig),
+            userHandle: bufferEncode(userHandle),
+          },
+        }),
+        function (data) {
+          return data
+        },
+        'json')
+    })
+    .then((success) => {
+      alert("successfully logged in " + username + "!")
+      return
+    })
+    .catch((error) => {
+      console.log(error)
+      alert("failed to authenticate " + username)
+    });
+
+}
 
 document.addEventListener('DOMContentLoaded', function () {
           document.getElementById('webauthn_auth_button').addEventListener('click', webAuthnAuthenticateUser);
           document.getElementById('webauthn_register_button').addEventListener('click', webAuthnRegisterUser);
+	  document.getElementById('u2f_webauthn_auth_button').addEventListener('click', webAuthnAuthenticateUserCompat);
           //  main();
 });

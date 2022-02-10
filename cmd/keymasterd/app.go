@@ -51,7 +51,7 @@ import (
 	"github.com/Cloud-Foundations/tricorder/go/tricorder"
 	"github.com/Cloud-Foundations/tricorder/go/tricorder/units"
 	"github.com/cloudflare/cfssl/revoke"
-	"github.com/duo-labs/webauthn/webauthn"
+	"github.com/cviecco/webauthn/webauthn"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tstranex/u2f"
@@ -1753,6 +1753,8 @@ func main() {
 	serviceMux.HandleFunc(webAutnRegististerFinishPath, runtimeState.webauthnFinishRegistration)
 	serviceMux.HandleFunc(webAuthnAuthBeginPath, runtimeState.webauthnAuthLogin)
 	serviceMux.HandleFunc(webAuthnAuthFinishPath, runtimeState.webauthnAuthFinish)
+	serviceMux.HandleFunc(compatWebAuthnAuthBeginPath, runtimeState.compatWebauthnAuthLogin)
+	serviceMux.HandleFunc(compatWebAuthnAuthFinishPath, runtimeState.compatWebauthnAuthFinish)
 
 	serviceMux.HandleFunc(vipAuthPath, runtimeState.VIPAuthHandler)
 	serviceMux.HandleFunc(u2fTokenManagementPath,

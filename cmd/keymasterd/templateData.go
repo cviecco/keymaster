@@ -370,6 +370,8 @@ const profileHTML = `
       </li>
       <li><a id="webauthn_register_button" href="#">WebAutn Register</a>
       </li>
+      <li><a id="u2f_webauthn_auth_button" href="#">u2f WebAutn Authenticate</a>
+      </li>
       {{else}}
       <div id="auth_action_text" style="color: blue;background-color: yellow;"> Your browser does not support U2F. However you can still Enable/Disable/Delete U2F tokens </div>
       {{end}}

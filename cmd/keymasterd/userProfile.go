@@ -2,8 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/binary"
-	"github.com/duo-labs/webauthn/webauthn"
+	"github.com/cviecco/webauthn/webauthn"
 	"time"
 )
 
@@ -31,8 +32,39 @@ func (u *userProfile) WebAuthnIcon() string {
 func (u *userProfile) WebAuthnCredentials() []webauthn.Credential {
 	var rvalue []webauthn.Credential
 	for _, authData := range u.WebauthnData {
+		if !authData.Enabled {
+			continue
+		}
+		logger.Debugf(2, "native webauth credential=%+v", authData.Credential)
 		rvalue = append(rvalue, authData.Credential)
 	}
+	for _, u2fData := range u.U2fAuthData {
+		if !u2fData.Enabled {
+			continue
+		}
+		pubkey, err := x509.MarshalPKIXPublicKey(&u2fData.Registration.PubKey)
+		if err != nil {
+			logger.Printf("error marshaling pub key=%+v", u2fData.Registration.PubKey)
+			continue
+		}
+		/*
+				keyID, _ := base64.StdEncoding.DecodeString(encodedKeyHandleIDHere)
+			pubkey, _ := base64.StdEncoding.DecodeString(encodedPubKeyHere)
+		*/
+
+		credential := webauthn.Credential{
+			ID:              u2fData.Registration.KeyHandle,
+			PublicKey:       pubkey,
+			AttestationType: "fido-u2f", // Also tried with this commented.
+			Authenticator: webauthn.Authenticator{
+				SignCount: u2fData.Counter,
+				AAGUID:    []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+			},
+		}
+		logger.Debugf(2, "native u2f migration credential=%+v", credential)
+		rvalue = append(rvalue, credential)
+	}
+
 	return rvalue
 }
 
