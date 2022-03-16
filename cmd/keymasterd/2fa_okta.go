@@ -125,6 +125,16 @@ func (state *RuntimeState) oktaPollCheckHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.(*instrumentedwriter.LoggingWriter).SetUsername(authData.Username)
+
+	// if already authenticated with okta return a 2XX
+	// this is most likely a race  condition with JS
+	// because we want to distinguish with the 200 of good processing
+	// we use 204 here.
+	if (authData.AuthType & AuthTypeOkta2FA) == AuthTypeOkta2FA {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	oktaAuth, ok := state.passwordChecker.(*okta.PasswordAuthenticator)
 	if !ok {
 		logger.Println("password authenticator is not okta")
