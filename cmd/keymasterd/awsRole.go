@@ -277,6 +277,8 @@ func (state *RuntimeState) requestAwsRoleCertificateHandler(
 	callerArn, err := getCallerIdentity(r.Header, validateStsPresignedUrl)
 	if err != nil {
 		state.logger.Println(err)
+		state.logger.Printf("Error getting Caller identity")
+		state.logger.Debugf(1, "requestAwsRoleCertificateHandler: error on getCallerIdentity: %s", err)
 		state.writeFailureResponse(w, r, http.StatusUnauthorized,
 			"verification request failed")
 		return
@@ -304,7 +306,7 @@ func (state *RuntimeState) requestAwsRoleCertificateHandler(
 		return
 	}
 	if block.Type != "PUBLIC KEY" {
-		state.logger.Printf("unsupport PEM type: %s\n", block.Type)
+		state.logger.Debugf(1, "unsupported PEM type: %s\n", block.Type)
 		state.writeFailureResponse(w, r, http.StatusBadRequest,
 			"unsupported PEM type")
 		return
