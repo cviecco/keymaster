@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Cloud-Foundations/golib/pkg/log"
+	"github.com/bearsh/hid"
 	"github.com/duo-labs/webauthn/protocol"
 	"github.com/flynn/u2f/u2fhid"
 	"github.com/flynn/u2f/u2ftoken"
@@ -76,6 +77,18 @@ func checkU2FDevices(logger log.Logger) {
 			logger.Fatal(err)
 		}
 		defer dev.Close()
+	}
+	// New listing
+	hidDevices := hid.Enumerate(0x0, 0x0)
+	logger.Printf("hid device len=%d", len(hidDevices))
+	for i, device := range hidDevices {
+		logger.Printf("device[%d]=%+v", i, device)
+	}
+
+	devices2 := u2fhost.Devices()
+	if len(devices2) == 0 {
+
+		logger.Fatal("no U2F (u2fHost) tokens found")
 	}
 
 }
