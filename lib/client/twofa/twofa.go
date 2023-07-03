@@ -160,12 +160,14 @@ func authenticateUser(
 	}
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode != 200 {
+		logger.Debugf(2, "client, twfoa non 200 resp=%+v", loginResp)
 		if loginResp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("Unauthorized reponse from server. Check username and/or password")
 		}
 		logger.Debugf(1, "got error from login call %s", loginResp.Status)
 		return fmt.Errorf("got error from login call %s", loginResp.Status)
 	}
+	logger.Debugf(9, "client, 200 resp=%+v", loginResp)
 	//Enusre we have at least one cookie
 	if len(loginResp.Cookies()) < 1 {
 		err = errors.New("No cookies from login")

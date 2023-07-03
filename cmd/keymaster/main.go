@@ -159,6 +159,12 @@ func preConnectToHost(baseUrl string, client *http.Client, logger log.DebugLogge
 		return err
 	}
 	defer response.Body.Close()
+	if response.TLS != nil {
+		logger.Debugf(2, "Client Preconnect: remote TLS Issuer=%+s, subject=%s",
+			response.TLS.VerifiedChains[0][0].Issuer.String(),
+			response.TLS.VerifiedChains[0][0].Subject.String(),
+		)
+	}
 	//we have to consume the contents of the body in order to keep the connection open
 	_, err = ioutil.ReadAll(response.Body)
 	if err != nil {
@@ -354,6 +360,7 @@ func setupCerts(
 		if err != nil {
 			return err
 		}
+		logger.Debugf(9, " DONT SHARE Read password is %v", password)
 		baseUrl, err = twofa.AuthenticateToTargetUrls(userName, password,
 			targetURLs, false, client,
 			userAgentString, logger)
