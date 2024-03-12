@@ -34,7 +34,9 @@ function webAuthnRegisterUser() {
 		  console.log(credentialCreationOptions);
 		  credentialCreationOptions.publicKey.challenge = bufferDecode(credentialCreationOptions.publicKey.challenge);
                   credentialCreationOptions.publicKey.user.id = bufferDecode(credentialCreationOptions.publicKey.user.id);
+                  credentialCreationOptions.publicKey.attestation="direct";
                   credentialCreationOptions.publicKey.authenticatorSelection.userVerification="discouraged";
+                  credentialCreationOptions.publicKey.authenticatorSelection.authenticatorAttachment="cross-platform";
                   console.log(credentialCreationOptions);
                   return navigator.credentials.create({
                        publicKey: credentialCreationOptions.publicKey

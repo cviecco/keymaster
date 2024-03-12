@@ -125,6 +125,7 @@ func (state *RuntimeState) webauthnFinishRegistration(w http.ResponseWriter, r *
 		logger.Debugf(1, "%v", err)
 		return
 	}
+	logger.Debugf(3, "Registration data=%+v", authData)
 	w.(*instrumentedwriter.LoggingWriter).SetUsername(authData.Username)
 
 	// Check that they can change other users
