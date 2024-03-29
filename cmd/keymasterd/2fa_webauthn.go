@@ -11,8 +11,8 @@ import (
 
 	"github.com/tstranex/u2f"
 
-	"github.com/duo-labs/webauthn/protocol"
-	"github.com/duo-labs/webauthn/webauthn"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/Cloud-Foundations/keymaster/lib/instrumentedwriter"
 	"github.com/Cloud-Foundations/keymaster/proto/eventmon"
@@ -321,7 +321,8 @@ func (state *RuntimeState) webauthnAuthFinish(w http.ResponseWriter, r *http.Req
 		shouldVerifyUser := session.UserVerification == protocol.VerificationRequired
 
 		rpID := state.webAuthn.Config.RPID
-		rpOrigin := state.webAuthn.Config.RPOrigin
+		//cviecco this may be fully busted
+		rpOrigin := []string{state.webAuthn.Config.RPOrigin}
 		appID := u2fAppID
 
 		// Handle steps 4 through 16

@@ -6,7 +6,8 @@ import (
 	"encoding/binary"
 	"time"
 
-	"github.com/duo-labs/webauthn/webauthn"
+	//"github.com/duo-labs/webauthn/webauthn"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // This is the implementation of duo-labs' webauthn User interface
@@ -98,7 +99,7 @@ func (u *userProfile) FixupCredential(username string, displayname string) {
 	}
 }
 
-/// next are not actually from there... but make it simpler
+// / next are not actually from there... but make it simpler
 func (u *userProfile) AddWebAuthnCredential(cred webauthn.Credential) error {
 	index := time.Now().Unix()
 	authData := webauthAuthData{

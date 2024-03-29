@@ -626,6 +626,7 @@ func withDevicesDoWebAuthnAuthenticate(
 	if clientData.Typ == clientDataAuthenticationTypeValue {
 		// The device signed data can be with the u2f protocol if compatibility
 		// is detected in that case we post on the u2f endpoint
+		logger.Debugf(2, "Using legacy u2f Signresponse")
 		webSignRequestBuf := &bytes.Buffer{}
 		err = json.NewEncoder(webSignRequestBuf).Encode(deviceResponse)
 		if err != nil {
@@ -654,6 +655,7 @@ func withDevicesDoWebAuthnAuthenticate(
 		io.Copy(ioutil.Discard, signRequestResp2.Body)
 		return nil
 	}
+	logger.Debugf(2, "Using webauthn endpoint")
 	webResponse := WebAuthnAuthenticationResponse{
 		Id:    deviceResponse.KeyHandle,
 		RawId: deviceResponse.KeyHandle,
@@ -692,7 +694,7 @@ func withDevicesDoWebAuthnAuthenticate(
 			signRequestResp2.Status, targetURL)
 		return err
 	}
-	logger.Debugf(2, "signResponse resp=%+v", signRequestResp2)
+	logger.Debugf(6, "signResponse resp=%+v", signRequestResp2)
 	io.Copy(ioutil.Discard, signRequestResp2.Body)
 	return nil
 }
