@@ -154,7 +154,7 @@ func (state *RuntimeState) webauthnFinishRegistration(w http.ResponseWriter, r *
 		webauthnJsonResponse(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	logger.Debugf(2, "new credential=%+v\n", *credential)
+	logger.Debugf(2, "WebauthnFinish, new credential=%+v\n", *credential)
 
 	err = profile.AddWebAuthnCredential(*credential)
 	if err != nil {

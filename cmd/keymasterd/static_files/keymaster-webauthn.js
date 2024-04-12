@@ -35,6 +35,8 @@ function webAuthnRegisterUser() {
 		  credentialCreationOptions.publicKey.challenge = bufferDecode(credentialCreationOptions.publicKey.challenge);
                   credentialCreationOptions.publicKey.user.id = bufferDecode(credentialCreationOptions.publicKey.user.id);
                   credentialCreationOptions.publicKey.authenticatorSelection.userVerification="discouraged";
+		  credentialCreationOptions.publicKey.authenticatorSelection.authenticatorAttachment="cross-platform";
+		  credentialCreationOptions.publicKey.attestation= "direct";
                   console.log(credentialCreationOptions);
                   return navigator.credentials.create({
                        publicKey: credentialCreationOptions.publicKey
@@ -65,7 +67,8 @@ function webAuthnRegisterUser() {
 
           })
           .then((success) => {
-                  alert("successfully registered " + username + "!")
+                  alert("successfully registered " + username + "!");
+		  location.reload();
                   return
           })
           .catch((error) => {
@@ -126,11 +129,11 @@ function webAuthnAuthenticateUser() {
         'json')
     })
     .then((success) => {
-      console.log("button pressed")
+      console.log("button pressed");
       return
     })
     .catch((error) => {
-      console.log(error)
+      console.log(error);
       alert("failed to authenticate " + username)
     });
 }
