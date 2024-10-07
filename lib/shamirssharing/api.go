@@ -1,5 +1,7 @@
 package shamirssharing
 
+import "github.com/Cloud-Foundations/golib/pkg/log"
+
 type SharePrivateDoc struct {
 	Version     int
 	KeyIdentity string
@@ -21,4 +23,5 @@ type ShareCombiner struct {
 	config         ShareConfig
 	knownShares    map[string]SharePrivateDoc
 	combinedSecret []byte
+	logger         log.DebugLogger
 }
