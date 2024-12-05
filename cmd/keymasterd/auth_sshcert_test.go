@@ -74,6 +74,14 @@ func TestSshCertAuthLoginWithChallengeHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(passwdFile.Name()) // clean up
+	state.HostIdentity = "127.0.0.1"
+	state.sshCertAuthenticator = sshcertauth.NewAuthenticator(
+		[]string{state.HostIdentity}, []string{})
+	err = state.initialzeSelfSSHCertAuthenticator()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	state.Config.Base.AllowedAuthBackendsForCerts = append(state.Config.Base.AllowedAuthBackendsForCerts, proto.AuthTypeSSHCert)
 	realLogger := serverlogger.New("") //TODO, we need to find a simulator for this
 	adminMux := http.NewServeMux()

@@ -187,6 +187,51 @@ func backgroundConnectToAnyKeymasterServer(targetUrls []string, client *http.Cli
 
 const rsaKeySize = 3072
 
+func generateX509WithSSHCert(homeDir string,
+	configContents config.AppConfigFile,
+	client *http.Client,
+	logger log.DebugLogger) error {
+
+	signers := makeSigners()
+
+	// Initialise the client connection.
+	targetURLs := strings.Split(configContents.Base.Gen_Cert_URLS, ",")
+	err := backgroundConnectToAnyKeymasterServer(targetURLs, client, logger)
+	if err != nil {
+		return err
+	}
+	if err := makeDirs(homeDir); err != nil {
+		return err
+	}
+	tlsKeyPath := filepath.Join(homeDir, DefaultTLSKeysLocation, FilePrefix)
+	if err := signers.Wait(); err != nil {
+		return err
+	}
+
+	// v1 key reused :(
+	encodedx509Signer, err := x509.MarshalPKCS8PrivateKey(signers.X509Rsa)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(
+		tlsKeyPath+".key",
+		pem.EncodeToMemory(&pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: encodedx509Signer}),
+		0600)
+	if err != nil {
+		return err
+	}
+
+	//loop
+	// connect to agent
+	// do login
+	// get x509 certs
+	//
+
+	return fmt.Errorf("not implemented")
+}
+
 func generateAwsRoleCert(homeDir string,
 	configContents config.AppConfigFile,
 	client *http.Client,
