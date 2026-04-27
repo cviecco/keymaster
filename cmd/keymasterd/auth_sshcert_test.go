@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
@@ -49,11 +48,10 @@ func TestCreateChallengeHandlerMinimal(t *testing.T) {
 	}
 	signerPub := ssh.MarshalAuthorizedKey(sshSigner.PublicKey())
 	state.websshauthenticator = sshcertauth.NewAuthenticator([]string{"localhost", "127.0.0.1"}, []string{string(signerPub)})
-	// TODO: This should be eventually be provided by the state
-	serverMux := http.NewServeMux()
-	serverMux.HandleFunc(sshcertauth.DefaultCreateChallengePath, state.CreateChallengeHandler)
-	serverMux.HandleFunc(sshcertauth.DefaultLoginWithChallengePath, state.LoginWithChallengeHandler)
-	serverMux.HandleFunc(certgenPath, state.certGenHandler)
+	serverMux, err := state.setupServiceMux()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Generate user sshkey and certificate (by signing with state.Signer)
 	userPrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
