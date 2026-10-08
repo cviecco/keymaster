@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	compatwebauthn "github.com/Cloud-Foundations/keymaster/lib/compat/webauthn/webauthn"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -31,6 +32,10 @@ func (u *userProfile) WebAuthnIcon() string {
 	return ""
 }
 
+func compatToNew(incred compatwebauthn.Credential) (webauthn.Credential, error) {
+	return webauthn.Credential{}, nil
+}
+
 // This function is needed to create a unified view of all webauthn credentials
 func (u *userProfile) WebAuthnCredentials() []webauthn.Credential {
 	logger.Debugf(3, "top of profile.WebAuthnCredentials %+v ", u)
@@ -39,7 +44,11 @@ func (u *userProfile) WebAuthnCredentials() []webauthn.Credential {
 		if !authData.Enabled {
 			continue
 		}
-		rvalue = append(rvalue, authData.Credential)
+		converted, err := compatToNew(authData.Credential)
+		if err != nil {
+			continue
+		}
+		rvalue = append(rvalue, converted)
 	}
 	logger.Debugf(3, "profile.WebAuthnCredentials after webauthn.Credential loop")
 	for _, u2fAuthData := range u.U2fAuthData {
@@ -109,9 +118,9 @@ func (u *userProfile) FixupCredential(username string, displayname string) {
 func (u *userProfile) AddWebAuthnCredential(cred webauthn.Credential) error {
 	index := time.Now().Unix()
 	authData := webauthAuthData{
-		CreatedAt:  time.Now(),
-		Enabled:    true,
-		Credential: cred,
+		CreatedAt: time.Now(),
+		Enabled:   true,
+		//Credential: cred,
 	}
 	u.WebauthnData[index] = &authData
 	return nil
