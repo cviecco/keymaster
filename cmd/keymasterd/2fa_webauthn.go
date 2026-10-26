@@ -189,6 +189,7 @@ func (state *RuntimeState) webauthnFinishRegistration(w http.ResponseWriter, r *
 		webauthnJsonResponse(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	state.logger.Debugf(2, "parsed reg response=%+v", parsedResponse)
 
 	//credential, err := state.webAuthn.FinishRegistration(profile, *localData.WebAuthLogin, r)
 	credential, err := state.webAuthn.CreateCredential(profile, *localData.WebAuthLogin, parsedResponse)
