@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/tstranex/u2f"
 
 	oldproto "github.com/duo-labs/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
@@ -121,10 +123,8 @@ const webAutnRegististerFinishPath = "/webauthn/RegisterFinish/"
 // x5c[0] is the attestation certificate and each following element is
 // expected to be the issuer of the previous one. All certificates must
 // parse and be within their validity period at time now.
-// Since we have no trust anchors (no metadata service is configured) this
-// only verifies the internal consistency of the provided chain, the
-// attestation signature itself is checked against x5c[0] by the webauthn
-// library.
+// This only verifies the internal consistency of the provided chain, trust
+// anchors are checked by verifyAttestationX5C using the FIDO metadata.
 func verifyX5CChain(x5c []any, now time.Time) error {
 	if len(x5c) == 0 {
 		return fmt.Errorf("x5c is present but empty")
@@ -139,6 +139,7 @@ func verifyX5CChain(x5c []any, now time.Time) error {
 		if err != nil {
 			return fmt.Errorf("x5c[%d] parse error: %s", i, err)
 		}
+		logger.Printf("verifyChain cert[%i]=%+v", i, cert)
 		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
 			return fmt.Errorf("x5c[%d] (%s) is not valid at %s (valid %s to %s)",
 				i, cert.Subject, now.Format(time.RFC3339),
@@ -159,18 +160,25 @@ func verifyX5CChain(x5c []any, now time.Time) error {
 // verifyAttestationX5C verifies any x5c data present in the attestation
 // statement (or in the sub statements of a compound attestation) of a
 // credential creation response. Responses with no x5c data are accepted.
+// When mds is not nil the attestation is also verified against the FIDO
+// metadata, which checks the x5c chain against the trust anchors of the
+// authenticator and its status reports.
 func verifyAttestationX5C(parsedResponse *protocol.ParsedCredentialCreationData,
+	clientDataHash []byte, mds metadata.Provider,
+	policy protocol.AttestationPolicy, signature protocol.SignaturePolicy,
 	now time.Time) error {
-	attObj := parsedResponse.Response.AttestationObject
+	attObj := &parsedResponse.Response.AttestationObject
 	statements := []map[string]any{attObj.AttStatement}
 	for _, sub := range attObj.SubStatements {
 		statements = append(statements, sub.AttStatement)
 	}
+	hasX5C := false
 	for _, stmt := range statements {
 		rawX5C, ok := stmt["x5c"]
 		if !ok {
 			continue
 		}
+		hasX5C = true
 		x5c, ok := rawX5C.([]any)
 		if !ok {
 			return fmt.Errorf("x5c is not an array")
@@ -179,6 +187,18 @@ func verifyAttestationX5C(parsedResponse *protocol.ParsedCredentialCreationData,
 			return err
 		}
 	}
+	if !hasX5C || mds == nil {
+		return nil
+	}
+	if err := attObj.VerifyAttestation(clientDataHash, mds, policy, signature); err != nil {
+		var protoErr *protocol.Error
+		if errors.As(err, &protoErr) {
+			return fmt.Errorf("metadata verification failed: %s (%s)",
+				protoErr.Details, protoErr.DevInfo)
+		}
+		return fmt.Errorf("metadata verification failed: %s", err)
+	}
+	logger.Printf("verification succeeded")
 	return nil
 }
 
@@ -256,14 +276,6 @@ func (state *RuntimeState) webauthnFinishRegistration(w http.ResponseWriter, r *
 		return
 	}
 	state.logger.Debugf(2, "parsed reg response=%+v", parsedResponse)
-	if err := verifyAttestationX5C(parsedResponse, time.Now()); err != nil {
-		state.logger.Printf("webauthnFinishRegistration: x5c verification failed for %s: %s",
-			assumedUser, err)
-		webauthnJsonResponse(w, "invalid attestation certificate", http.StatusBadRequest)
-		return
-	} else {
-		state.logger.Debugf(2, "verified assertion (maybe)")
-	}
 
 	//credential, err := state.webAuthn.FinishRegistration(profile, *localData.WebAuthLogin, r)
 	credential, err := state.webAuthn.CreateCredential(profile, *localData.WebAuthLogin, parsedResponse)
@@ -273,6 +285,17 @@ func (state *RuntimeState) webauthnFinishRegistration(w http.ResponseWriter, r *
 		return
 	}
 	state.logger.Debugf(2, "new credential=%+v\n", *credential)
+	// CreateCredential has already verified the attestation signature, here
+	// we verify the x5c chain (if any) including the FIDO metadata.
+	err = verifyAttestationX5C(parsedResponse, credential.Attestation.ClientDataHash,
+		state.fidoMDS, state.webAuthn.Config.Attestation,
+		state.webAuthn.Config.Signature, time.Now())
+	if err != nil {
+		state.logger.Printf("webauthnFinishRegistration: x5c verification failed for %s: %s",
+			assumedUser, err)
+		webauthnJsonResponse(w, "invalid attestation certificate", http.StatusBadRequest)
+		return
+	}
 
 	err = profile.AddWebAuthnCredential(*credential)
 	if err != nil {

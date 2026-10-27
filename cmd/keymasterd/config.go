@@ -37,6 +37,7 @@ import (
 	"github.com/Cloud-Foundations/golib/pkg/log"
 	"github.com/Cloud-Foundations/golib/pkg/watchdog"
 	"github.com/Cloud-Foundations/keymaster/keymasterd/admincache"
+	"github.com/Cloud-Foundations/keymaster/lib/attest/fido"
 	"github.com/Cloud-Foundations/keymaster/lib/authenticators/okta"
 	"github.com/Cloud-Foundations/keymaster/lib/cryptoutils"
 	"github.com/Cloud-Foundations/keymaster/lib/pwauth/command"
@@ -609,6 +610,10 @@ func loadVerifyConfigFile(configFilename string,
 	})
 	if err != nil {
 		return nil, err
+	}
+	runtimeState.fidoMDS, err = fido.GetProvider()
+	if err != nil {
+		return nil, fmt.Errorf("cannot load FIDO metadata: %s", err)
 	}
 
 	if len(runtimeState.Config.Base.KerberosRealm) > 0 {
