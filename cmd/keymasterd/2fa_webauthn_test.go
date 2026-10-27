@@ -7,11 +7,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"testing"
@@ -789,4 +791,77 @@ func TestWebAuthnRegistrationFinish(t *testing.T) {
 	}
 
 	state.dbDone <- struct{}{}
+}
+
+func makeTestX5CCert(t *testing.T, subject string, notBefore, notAfter time.Time,
+	isCA bool, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (
+	*x509.Certificate, *ecdsa.PrivateKey) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: subject},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		BasicConstraintsValid: true,
+		IsCA:                  isCA,
+	}
+	if parent == nil {
+		parent = template
+		parentKey = key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, parent,
+		&key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, key
+}
+
+func TestVerifyX5CChain(t *testing.T) {
+	now := time.Now()
+	notBefore := now.Add(-time.Hour)
+	notAfter := now.Add(time.Hour)
+	root, rootKey := makeTestX5CCert(t, "root", notBefore, notAfter, true, nil, nil)
+	leaf, _ := makeTestX5CCert(t, "leaf", notBefore, notAfter, false, root, rootKey)
+	otherRoot, _ := makeTestX5CCert(t, "other", notBefore, notAfter, true, nil, nil)
+	expiredLeaf, _ := makeTestX5CCert(t, "expired", now.Add(-2*time.Hour),
+		now.Add(-time.Hour), false, root, rootKey)
+
+	// Self standing attestation cert (fido-u2f style)
+	require.NoError(t, verifyX5CChain([]any{leaf.Raw}, now))
+	// Full chain
+	require.NoError(t, verifyX5CChain([]any{leaf.Raw, root.Raw}, now))
+	// Empty
+	require.Error(t, verifyX5CChain([]any{}, now))
+	// Not bytes
+	require.Error(t, verifyX5CChain([]any{"notbytes"}, now))
+	// Garbage
+	require.Error(t, verifyX5CChain([]any{[]byte("garbage")}, now))
+	// Wrong issuer
+	require.Error(t, verifyX5CChain([]any{leaf.Raw, otherRoot.Raw}, now))
+	// Expired
+	require.Error(t, verifyX5CChain([]any{expiredLeaf.Raw, root.Raw}, now))
+	// Not yet valid
+	require.Error(t, verifyX5CChain([]any{leaf.Raw, root.Raw}, now.Add(-2*time.Hour)))
+
+	// Attestation statement level checks
+	parsed := &protocol.ParsedCredentialCreationData{}
+	require.NoError(t, verifyAttestationX5C(parsed, now))
+	parsed.Response.AttestationObject.AttStatement = map[string]any{
+		"x5c": []any{leaf.Raw, root.Raw}}
+	require.NoError(t, verifyAttestationX5C(parsed, now))
+	parsed.Response.AttestationObject.AttStatement["x5c"] = "notanarray"
+	require.Error(t, verifyAttestationX5C(parsed, now))
+	parsed.Response.AttestationObject.AttStatement = nil
+	parsed.Response.AttestationObject.SubStatements = []protocol.NonCompoundAttestationObject{
+		{AttStatement: map[string]any{"x5c": []any{leaf.Raw, otherRoot.Raw}}},
+	}
+	require.Error(t, verifyAttestationX5C(parsed, now))
 }
