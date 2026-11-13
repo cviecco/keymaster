@@ -70,6 +70,12 @@ win-client: client-test
 client-test:
 	go test -v  ./cmd/keymaster/...
 
+coverage.txt:
+	go test -coverprofile=coverage.txt ./...
+
+coverview: coverage.txt
+	go tool cover -html=coverage.txt
+
 get-deps:
 	go get -t ./...
 
@@ -77,6 +83,7 @@ clean:
 	rm -f bin/*
 	rm -f keymaster-*.tar.gz
 	rm -f keymaster.spec
+	rm -f coverage.txt
 
 ${BINARY}-${VERSION}.tar.gz:	prebuild
 	mkdir ${BINARY}-${VERSION}

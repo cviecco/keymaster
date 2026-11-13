@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -18,6 +19,8 @@ import (
 	"github.com/Cloud-Foundations/golib/pkg/log"
 	"github.com/Cloud-Foundations/keymaster/lib/certgen"
 	"github.com/Cloud-Foundations/keymaster/lib/cryptoutils"
+
+	"github.com/cviecco/sss-distrib/lib/sssdoc"
 )
 
 // /
@@ -83,6 +86,72 @@ func (cmd *GenerateCmd) Run(globals *Globals) error {
 	return nil
 }
 
+// ///////
+type GenerateSSSCmd struct {
+	SSSFilename     string   `help:"SSSShareDocFilename to write" default:"ssdsoc.json"`
+	KeyFilename     string   `help:"Encrypted keyfile to write" default:"caprivate.pem.asc"`
+	NumRequiredKeys int      `help:"Num of shares needed to decrypt" required:""`
+	PublicKeyPaths  []string `arg:"" name:"path" help:"Files with public keys (one per file)." type:"path"`
+	KeyType         string   `help:"Type of key (ed25519|rsa)" default:"ed25519"`
+}
+
+const randomStringEntropyBytes = 32
+
+func genRandomString() (string, error) {
+	size := randomStringEntropyBytes
+	rb := make([]byte, size)
+	_, err := rand.Read(rb)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(rb), nil
+}
+
+func (cmd *GenerateSSSCmd) generateAndEncrypt(outDocWriter io.Writer,
+	outKeyWriter io.Writer, logger log.DebugLogger) error {
+	secret, err := genRandomString()
+	if err != nil {
+		return err
+	}
+	recipients, err := sssdoc.LoadMultifiles(cmd.PublicKeyPaths)
+	if err != nil {
+		return fmt.Errorf("error loading public key files: %w", err)
+	}
+
+	_, err = generateNewKeyPair([]byte(secret), cmd.KeyType, outKeyWriter, logger)
+	if err != nil {
+		return err
+	}
+	doc, err := sssdoc.GenerateNewDocWithSecret(recipients, cmd.NumRequiredKeys, []byte(secret))
+
+	if err != nil {
+		return err
+	}
+	serialized, err := json.MarshalIndent(*doc, " ", "    ")
+	if err != nil {
+		return fmt.Errorf("error serializing share doc: %w", err)
+	}
+
+	_, err = outDocWriter.Write(serialized)
+	return err
+}
+
+func (cmd *GenerateSSSCmd) Run(globals *Globals) error {
+	logger := globals.Logger
+	outDocFile, err := os.OpenFile(cmd.SSSFilename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer outDocFile.Close()
+	outKeyFile, err := os.OpenFile(cmd.KeyFilename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer outKeyFile.Close()
+	return cmd.generateAndEncrypt(outDocFile, outKeyFile, logger)
+
+}
+
 // ////////
 type PrintPublicCmd struct {
 	InFilename  string `help:"Encrypted file to read" required:""`
@@ -130,7 +199,6 @@ func serializePublic(pubKey crypto.PublicKey, outFormat string, outWriter io.Wri
 	default:
 		return fmt.Errorf("invalid outpur format")
 	}
-	return nil
 }
 
 func printPublicKey(passPhrase []byte, inFile io.Reader, outFormat string, outWriter io.Writer, logger log.DebugLogger) error {
